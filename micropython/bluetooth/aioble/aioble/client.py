@@ -34,6 +34,7 @@ _FLAG_WRITE = const(0x0008)
 _FLAG_NOTIFY = const(0x0010)
 _FLAG_INDICATE = const(0x0020)
 
+
 # Forward IRQs directly to static methods on the type that handles them and
 # knows how to map handles to instances. Note: We copy all uuid and data
 # params here for safety, but a future optimisation might be able to avoid
@@ -269,16 +270,13 @@ class BaseClientCharacteristic:
             characteristic._read_status = status
             characteristic._read_event.set()
 
-    async def write(self, data, response=False, timeout_ms=1000):
+    async def write(self, data, response=None, timeout_ms=1000):
         self._check(_FLAG_WRITE | _FLAG_WRITE_NO_RESPONSE)
 
-        # If we only support write-with-response, then force sensible default.
-        if (
-            response is None
-            and (self.properties & _FLAGS_WRITE)
-            and not (self.properties & _FLAG_WRITE_NO_RESPONSE)
-        ):
-            response = True
+        # If the response arg is unset, then default it to true if we only support write-with-response.
+        if response is None:
+            p = self.properties
+            response = (p & _FLAG_WRITE) and not (p & _FLAG_WRITE_NO_RESPONSE)
 
         if response:
             # Same as read.

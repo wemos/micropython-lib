@@ -104,13 +104,18 @@ async def task(g=None, prompt="--> "):
             cmd = ""
             while True:
                 b = await s.read(1)
-                c = ord(b)
                 pc = c  # save previous character
+                c = ord(b)
                 pt = t  # save previous time
                 t = time.ticks_ms()
                 if c < 0x20 or c > 0x7E:
                     if c == 0x0A:
-                        # CR
+                        # LF
+                        # If the previous character was also LF, and was less
+                        # than 20 ms ago, this was likely due to CRLF->LFLF
+                        # conversion, so ignore this linefeed.
+                        if pc == 0x0A and time.ticks_diff(t, pt) < 20:
+                            continue
                         sys.stdout.write("\n")
                         if cmd:
                             # Push current command.

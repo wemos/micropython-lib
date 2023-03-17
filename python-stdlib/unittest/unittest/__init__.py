@@ -332,12 +332,12 @@ class TestResult:
         return self
 
 
-def _capture_exc(exc, traceback):
+def _capture_exc(exc, exc_traceback):
     buf = io.StringIO()
     if hasattr(sys, "print_exception"):
         sys.print_exception(exc, buf)
     elif traceback is not None:
-        traceback.print_exception(None, exc, traceback, file=buf)
+        traceback.print_exception(None, exc, exc_traceback, file=buf)
     return buf.getvalue()
 
 
@@ -402,7 +402,7 @@ def _run_suite(c, test_result: TestResult, suite_name=""):
             test_result.skipped.append((name, c, reason))
         except Exception as ex:
             _handle_test_exception(
-                current_test=(name, c), test_result=test_result, exc_info=sys.exc_info()
+                current_test=(name, c), test_result=test_result, exc_info=(type(ex), ex, None)
             )
             # Uncomment to investigate failure in detail
             # raise
@@ -460,15 +460,3 @@ def main(module="__main__", testRunner=None):
     suite = TestSuite(module.__name__)
     suite._load_module(module)
     return testRunner.run(suite)
-
-
-# Support `micropython -m unittest` (only useful if unitest-discover is
-# installed).
-if __name__ == "__main__":
-    try:
-        # If unitest-discover is installed, use the main() provided there.
-        from unittest_discover import discover_main
-
-        discover_main()
-    except ImportError:
-        pass

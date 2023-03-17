@@ -1,3 +1,3 @@
-metadata(version="0.10.0")
+metadata(version="0.10.2")
 
-module("unittest.py")
+package("unittest")
