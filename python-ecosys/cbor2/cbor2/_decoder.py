@@ -159,7 +159,7 @@ def decode_simple_value(decoder):
 
 
 def decode_float16(decoder):
-    payload = decoder.read(2)
+    decoder.read(2)
     raise NotImplementedError  # no float16 unpack function
 
 
@@ -210,8 +210,9 @@ class CBORDecoder(object):
         data = self.fp.read(amount)
         if len(data) < amount:
             raise CBORDecodeError(
-                "premature end of stream (expected to read {} bytes, got {} "
-                "instead)".format(amount, len(data))
+                "premature end of stream (expected to read {} bytes, got {} instead)".format(
+                    amount, len(data)
+                )
             )
 
         return data
