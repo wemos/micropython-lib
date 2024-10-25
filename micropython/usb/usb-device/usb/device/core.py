@@ -8,6 +8,14 @@ from micropython import const
 import machine
 import struct
 
+try:
+    from _thread import get_ident
+except ImportError:
+
+    def get_ident():
+        return 0  # Placeholder, for no threading support
+
+
 _EP_IN_FLAG = const(1 << 7)
 
 # USB descriptor types
@@ -76,6 +84,8 @@ class _Device:
         self._itfs = {}  # Mapping from interface number to interface object, set by init()
         self._eps = {}  # Mapping from endpoint address to interface object, set by _open_cb()
         self._ep_cbs = {}  # Mapping from endpoint address to Optional[xfer callback]
+        self._cb_thread = None  # Thread currently running endpoint callback
+        self._cb_ep = None  # Endpoint number currently running callback
         self._usbd = machine.USBDevice()  # low-level API
 
     def init(self, *itfs, **kwargs):
@@ -100,6 +110,7 @@ class _Device:
         device_protocol=0,
         config_str=None,
         max_power_ma=None,
+        remote_wakeup=False,
     ):
         # Configure the USB device with a set of interfaces, and optionally reconfiguring the
         # device and configuration descriptor fields
@@ -189,7 +200,7 @@ class _Device:
         bmAttributes = (
             (1 << 7)  # Reserved
             | (0 if max_power_ma else (1 << 6))  # Self-Powered
-            # Remote Wakeup not currently supported
+            | ((1 << 5) if remote_wakeup else 0)
         )
 
         # Configuration string is optional but supported
@@ -242,8 +253,8 @@ class _Device:
         return self._usbd.active(*optional_value)
 
     def _open_itf_cb(self, desc):
-        # Singleton callback from TinyUSB custom class driver, when USB host does
-        # Set Configuration. Called once per interface or IAD.
+        # Callback from TinyUSB lower layer, when USB host does Set
+        # Configuration. Called once per interface or IAD.
 
         # Note that even if the configuration descriptor contains an IAD, 'desc'
         # starts from the first interface descriptor in the IAD and not the IAD
@@ -281,7 +292,7 @@ class _Device:
             itf.on_open()
 
     def _reset_cb(self):
-        # Callback when the USB device is reset by the host
+        # TinyUSB lower layer callback when the USB device is reset by the host
 
         # Allow interfaces to respond to the reset
         for itf in self._itfs.values():
@@ -292,13 +303,13 @@ class _Device:
         self._ep_cbs = {}
 
     def _submit_xfer(self, ep_addr, data, done_cb=None):
-        # Singleton function to submit a USB transfer (of any type except control).
+        # Submit a USB transfer (of any type except control) to TinyUSB lower layer.
         #
         # Generally, drivers should call Interface.submit_xfer() instead. See
         # that function for documentation about the possible parameter values.
         if ep_addr not in self._eps:
             raise ValueError("ep_addr")
-        if self._ep_cbs[ep_addr]:
+        if self._xfer_pending(ep_addr):
             raise RuntimeError("xfer_pending")
 
         # USBDevice callback may be called immediately, before Python execution
@@ -308,15 +319,32 @@ class _Device:
         self._ep_cbs[ep_addr] = done_cb or True
         return self._usbd.submit_xfer(ep_addr, data)
 
+    def _xfer_pending(self, ep_addr):
+        # Returns True if a transfer is pending on this endpoint.
+        #
+        # Generally, drivers should call Interface.xfer_pending() instead. See that
+        # function for more documentation.
+        return self._ep_cbs[ep_addr] or (self._cb_ep == ep_addr and self._cb_thread != get_ident())
+
     def _xfer_cb(self, ep_addr, result, xferred_bytes):
-        # Singleton callback from TinyUSB custom class driver when a transfer completes.
+        # Callback from TinyUSB lower layer when a transfer completes.
         cb = self._ep_cbs.get(ep_addr, None)
+        self._cb_thread = get_ident()
+        self._cb_ep = ep_addr  # Track while callback is running
         self._ep_cbs[ep_addr] = None
-        if callable(cb):
-            cb(ep_addr, result, xferred_bytes)
+
+        # In most cases, 'cb' is a callback function for the transfer. Can also be:
+        # - True (for a transfer with no callback)
+        # - None (TinyUSB callback arrived for invalid endpoint, or no transfer.
+        #   Generally unlikely, but may happen in transient states.)
+        try:
+            if callable(cb):
+                cb(ep_addr, result, xferred_bytes)
+        finally:
+            self._cb_ep = None
 
     def _control_xfer_cb(self, stage, request):
-        # Singleton callback from TinyUSB custom class driver when a control
+        # Callback from TinyUSB lower layer when a control
         # transfer is in progress.
         #
         # stage determines appropriate responses (possible values
@@ -528,7 +556,12 @@ class Interface:
         # Return True if a transfer is already pending on ep_addr.
         #
         # Only one transfer can be submitted at a time.
-        return _dev and bool(_dev._ep_cbs[ep_addr])
+        #
+        # The transfer is marked pending while a completion callback is running
+        # for that endpoint, unless this function is called from the callback
+        # itself. This makes it simple to submit a new transfer from the
+        # completion callback.
+        return _dev and _dev._xfer_pending(ep_addr)
 
     def submit_xfer(self, ep_addr, data, done_cb=None):
         # Submit a USB transfer (of any type except control)
