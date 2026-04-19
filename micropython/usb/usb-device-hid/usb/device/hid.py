@@ -34,6 +34,8 @@ _INTERFACE_CLASS = const(0x03)
 _INTERFACE_SUBCLASS_NONE = const(0x00)
 _INTERFACE_SUBCLASS_BOOT = const(0x01)
 
+# These values will only make sense when interface subclass
+# is 0x01, which indicates boot protocol support.
 _INTERFACE_PROTOCOL_NONE = const(0x00)
 _INTERFACE_PROTOCOL_KEYBOARD = const(0x01)
 _INTERFACE_PROTOCOL_MOUSE = const(0x02)
@@ -62,6 +64,7 @@ class HIDInterface(Interface):
         set_report_buf=None,
         protocol=_INTERFACE_PROTOCOL_NONE,
         interface_str=None,
+        interval_ms=8,
     ):
         # Construct a new HID interface.
         #
@@ -83,12 +86,15 @@ class HIDInterface(Interface):
         # - protocol can be set to a specific value as per HID v1.11 section 4.3 Protocols, p9.
         #
         # - interface_str is an optional string descriptor to associate with the HID USB interface.
+        #
+        # - interval_ms this is the polling rate the device will request the host use in milliseconds.
         super().__init__()
         self.report_descriptor = report_descriptor
         self.extra_descriptors = extra_descriptors
         self._set_report_buf = set_report_buf
         self.protocol = protocol
         self.interface_str = interface_str
+        self.interval_ms = interval_ms
 
         self._int_ep = None  # set during enumeration
 
@@ -123,6 +129,7 @@ class HIDInterface(Interface):
         if not self.is_open():
             return False
         self.submit_xfer(self._int_ep, report_data)
+        return True
 
     def desc_cfg(self, desc, itf_num, ep_num, strs):
         # Add the standard interface descriptor
@@ -130,7 +137,9 @@ class HIDInterface(Interface):
             itf_num,
             1,
             _INTERFACE_CLASS,
-            _INTERFACE_SUBCLASS_NONE,
+            _INTERFACE_SUBCLASS_NONE
+            if self.protocol == _INTERFACE_PROTOCOL_NONE
+            else _INTERFACE_SUBCLASS_BOOT,
             self.protocol,
             len(strs) if self.interface_str else 0,
         )
@@ -145,10 +154,15 @@ class HIDInterface(Interface):
         # Add the typical single USB interrupt endpoint descriptor associated
         # with a HID interface.
         self._int_ep = ep_num | _EP_IN_FLAG
-        desc.endpoint(self._int_ep, "interrupt", 8, 8)
+        desc.endpoint(self._int_ep, "interrupt", 8, self.interval_ms)
 
         self.idle_rate = 0
-        self.protocol = 0
+
+        # This variable is reused to track boot protocol status.
+        # 0 for boot protocol, 1 for report protocol
+        # According to Device Class Definition for Human Interface Devices (HID) v1.11
+        # Appendix F.5, the device comes up in non-boot mode by default.
+        self.protocol = 1
 
     def num_eps(self):
         return 1
@@ -197,6 +211,8 @@ class HIDInterface(Interface):
                     if desc_type == _DESC_HID_TYPE:
                         return self.get_hid_descriptor()
                     if desc_type == _DESC_REPORT_TYPE:
+                        # Reset to report protocol when report descriptor is requested
+                        self.protocol = 1
                         return self.report_descriptor
             elif req_type == _REQ_TYPE_CLASS:
                 # HID Spec p50: 7.2 Class-Specific Requests
