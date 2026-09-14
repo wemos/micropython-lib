@@ -1,6 +1,50 @@
 import socket
 
 
+class BodyStream:
+    def __init__(self, sock, remaining):
+        self._sock = sock
+        self._chunk = remaining < 0
+        self._remaining = remaining
+
+    def read(self, n=-1):
+        buf = bytearray(n if n >= 0 else 256)
+        if n >= 0:
+            got = self.readinto(buf)
+            return buf[:got] if got else b""
+        result = b""
+        while True:
+            got = self.readinto(buf)
+            if not got:
+                return result
+            result += buf[:got]
+
+    def readinto(self, buf):
+        s = self._sock
+        if self._remaining <= 0:
+            if self._remaining == 0:
+                return 0
+            self._remaining = int(s.readline().split(b";")[0], 16)
+            if self._remaining == 0:
+                while True:
+                    l = s.readline()
+                    if not l or l == b"\r\n":
+                        return 0
+        if len(buf) > self._remaining:
+            buf = memoryview(buf)[: self._remaining]
+        got = s.readinto(buf)
+        if not got:
+            raise ValueError("Connection closed before body complete")
+        self._remaining -= got
+        if self._remaining == 0 and self._chunk:
+            s.readline()
+            self._remaining = -1
+        return got
+
+    def close(self):
+        self._sock.close()
+
+
 class Response:
     def __init__(self, f):
         self.raw = f
@@ -31,6 +75,12 @@ class Response:
         import json
 
         return json.loads(self.content)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
 
 
 def request(
@@ -74,6 +124,14 @@ def request(
     else:
         raise ValueError("Unsupported protocol: " + proto)
 
+    if "?" in host:
+        host, _path = host.split("?", 1)
+        path = "?" + _path + path
+
+    if "#" in host:
+        host, _path = host.split("#", 1)
+        path = "#" + _path + path
+
     if ":" in host:
         host, port = host.split(":", 1)
         port = int(port)
@@ -98,7 +156,7 @@ def request(
             context = tls.SSLContext(tls.PROTOCOL_TLS_CLIENT)
             context.verify_mode = tls.CERT_NONE
             s = context.wrap_socket(s, server_hostname=host)
-        s.write(b"%s /%s HTTP/1.0\r\n" % (method, path))
+        s.write(b"%s /%s HTTP/1.1\r\n" % (method, path))
 
         if "Host" not in headers:
             headers["Host"] = host
@@ -116,8 +174,11 @@ def request(
             if chunked_data:
                 if "Transfer-Encoding" not in headers and "Content-Length" not in headers:
                     headers["Transfer-Encoding"] = "chunked"
-            elif "Content-Length" not in headers:
-                headers["Content-Length"] = str(len(data))
+            else:
+                if isinstance(data, str):
+                    data = bytes(data, "utf-8")
+                if "Content-Length" not in headers:
+                    headers["Content-Length"] = str(len(data))
 
         if "Connection" not in headers:
             headers["Connection"] = "close"
@@ -155,17 +216,22 @@ def request(
         reason = ""
         if len(l) > 2:
             reason = l[2].rstrip()
+        remaining = None
+        chunked = False
         while True:
             l = s.readline()
             if not l or l == b"\r\n":
                 break
             # print(l)
-            if l.startswith(b"Transfer-Encoding:"):
+            lowerl = l.lower()
+            if lowerl.startswith(b"transfer-encoding:"):
                 if b"chunked" in l:
-                    raise ValueError("Unsupported " + str(l, "utf-8"))
-            elif l.startswith(b"Location:") and not 200 <= status <= 299:
+                    chunked = True
+            elif lowerl.startswith(b"location:") and not 200 <= status <= 299:
                 if status in [301, 302, 303, 307, 308]:
                     redirect = str(l[10:-2], "utf-8")
+                    if redirect.startswith("/"):
+                        redirect = proto + "//" + host + ":" + str(port) + redirect
                 else:
                     raise NotImplementedError("Redirect %d not yet supported" % status)
             if parse_headers is False:
@@ -173,7 +239,10 @@ def request(
             elif parse_headers is True:
                 l = str(l, "utf-8")
                 k, v = l.split(":", 1)
-                resp_d[k] = v.strip()
+                v = v.strip()
+                resp_d[k] = v
+                if lowerl.startswith(b"content-length:"):
+                    remaining = int(v)
             else:
                 parse_headers(l, resp_d)
     except OSError:
@@ -189,7 +258,12 @@ def request(
         else:
             return request(method, redirect, data, json, headers, stream)
     else:
-        resp = Response(s)
+        if chunked:
+            resp = Response(BodyStream(s, -1))
+        elif remaining is not None:
+            resp = Response(BodyStream(s, remaining))
+        else:
+            resp = Response(s)
         resp.status_code = status
         resp.reason = reason
         if resp_d is not None:

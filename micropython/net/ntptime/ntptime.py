@@ -10,7 +10,7 @@ timeout = 1
 
 def time():
     NTP_QUERY = bytearray(48)
-    NTP_QUERY[0] = 0x1B
+    NTP_QUERY[0] = 0x23
     addr = socket.getaddrinfo(host, 123)[0][-1]
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -19,7 +19,11 @@ def time():
         msg = s.recv(48)
     finally:
         s.close()
+    if len(msg) < 48:
+        raise OSError(-1)
     val = struct.unpack("!I", msg[40:44])[0]
+    if not (msg[1] and val):
+        raise OSError(-1)
 
     # 2024-01-01 00:00:00 converted to an NTP timestamp
     MIN_NTP_TIMESTAMP = 3913056000

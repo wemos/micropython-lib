@@ -12,7 +12,14 @@ print(d)
 if d != b"zlutoucky kun upel dabelske ody":
     raise Exception("Error")
 
-base64.test()
+s0 = b"Aladdin:open sesame"
+s1 = base64.encodebytes(s0)
+if s1 != b"QWxhZGRpbjpvcGVuIHNlc2FtZQ==\n":
+    raise Exception("Error")
+print(s1)
+s2 = base64.decodebytes(s1)
+if s0 != s2:
+    raise Exception("Error")
 
 binary = b"\x99\x10\xaa"
 b = base64.b64encode(binary)
@@ -32,5 +39,16 @@ print(d)
 b = base64.b32decode(d)
 if b != b"zlutoucky kun upel dabelske ody":
     raise Exception("Error")
+
+binary = b"\x99\x10\xaa"
+b = base64.b32encode(binary)
+if b != b"TEIKU===":
+    raise Exception("Error")
+
+d = base64.b32decode(b)
+print(d)
+if d != binary:
+    raise Exception("Error")
+
 
 print("OK")

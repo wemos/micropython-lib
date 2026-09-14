@@ -27,16 +27,22 @@ or packages from micropython-lib, please post at the
 The same rules for commit messages, signing-off commits, and commit structure
 apply [as for the main MicroPython repository](https://github.com/micropython/micropython/blob/master/CODECONVENTIONS.md).
 
-All Python code is formatted using the [black](https://github.com/psf/black)
+All Python code is formatted using the [ruff](https://github.com/astral-sh/ruff)
 tool. You can run [`tools/codeformat.py`](tools/codeformat.py) to apply
-`black` automatically before submitting a PR. The GitHub CI will also run the
-[ruff](https://github.com/astral-sh/ruff) tool to apply further "linting"
-checks.
+`ruff` automatically before submitting a PR. The GitHub CI will also use `ruff`
+to apply further "linting" checks.
 
 Similar to the main repository, a configuration is provided for the
-[pre-commit](https://pre-commit.com/) tool to apply `black` code formatting
-rules and run `ruff` automatically. See the documentation for using pre-commit
+[pre-commit](https://pre-commit.com/) tool to apply `ruff` code formatting
+rules and apply linting checks. See the documentation for using pre-commit
 in [the code conventions document](https://github.com/micropython/micropython/blob/master/CODECONVENTIONS.md#automatic-pre-commit-hooks)
+
+While it is possible to create simple PRs from within GitHub itself, doing so
+is not really recommended. Doing so would bypass the pre-commit checks and
+you will end up with a PR that will potentially fail one or more CI jobs due
+to a commit subject/message that does not follow the format conventions, code
+that was not formatted using `ruff` beforehand, or for simpler things like a
+typo or a spelling error.
 
 In addition to the conventions from the main repository, there are some
 specific conventions and guidelines for micropython-lib:

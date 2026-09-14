@@ -106,9 +106,10 @@ async def task(g=None, prompt="--> "):
         hist_n = 0  # Number of history entries.
         c = 0  # ord of most recent character.
         t = 0  # timestamp of most recent character.
+        write = sys.stdout.write
         while True:
             hist_b = 0  # How far back in the history are we currently.
-            sys.stdout.write(prompt)
+            write(prompt)
             cmd: str = ""
             paste = False
             curs = 0  # cursor offset from end of cmd buffer
@@ -121,22 +122,28 @@ async def task(g=None, prompt="--> "):
                 pt = t  # save previous time
                 t = time.ticks_ms()
                 if c < 0x20 or c > 0x7E:
-                    if c == 0x0A:
-                        # LF
+                    if c == 0x0A or c == 0x0D:
+                        # LF or CR (handle both for raw terminal mode compatibility)
                         if paste:
-                            sys.stdout.write(b)
+                            # In paste mode, preserve the actual character
+                            write(b)
                             cmd += b
                             continue
-                        # If the previous character was also LF, and was less
-                        # than 20 ms ago, this was likely due to CRLF->LFLF
-                        # conversion, so ignore this linefeed.
-                        if pc == 0x0A and time.ticks_diff(t, pt) < 20:
+                        # Handle various newline sequences to avoid double-execution:
+                        # - CR+LF (Windows style): ignore LF if it follows CR quickly
+                        # - LF+LF (PTY double-newline): ignore second LF if it follows quickly
+                        # - CR+CR (potential double-CR): ignore second CR if it follows quickly
+                        if (
+                            (c == 0x0A and pc == 0x0D)  # LF after CR (CRLF)
+                            or (c == 0x0A and pc == 0x0A)  # LF after LF (double LF)
+                            or (c == 0x0D and pc == 0x0D)
+                        ) and time.ticks_diff(t, pt) < 20:  # CR after CR
                             continue
                         if curs:
                             # move cursor to end of the line
-                            sys.stdout.write("\x1b[{}C".format(curs))
+                            write("\x1b[{}C".format(curs))
                             curs = 0
-                        sys.stdout.write("\n")
+                        write("\n")
                         if cmd:
                             # Push current command.
                             hist[hist_i] = cmd
@@ -146,22 +153,20 @@ async def task(g=None, prompt="--> "):
 
                             result = await execute(cmd, g, s)
                             if result is not None:
-                                sys.stdout.write(repr(result))
-                                sys.stdout.write("\n")
+                                write(repr(result))
+                                write("\n")
                         break
                     elif c == 0x08 or c == 0x7F:
                         # Backspace.
                         if cmd:
                             if curs:
                                 cmd = "".join((cmd[: -curs - 1], cmd[-curs:]))
-                                sys.stdout.write(
-                                    "\x08\x1b[K"
-                                )  # move cursor back, erase to end of line
-                                sys.stdout.write(cmd[-curs:])  # redraw line
-                                sys.stdout.write("\x1b[{}D".format(curs))  # reset cursor location
+                                write("\x08\x1b[K")  # move cursor back, erase to end of line
+                                write(cmd[-curs:])  # redraw line
+                                write("\x1b[{}D".format(curs))  # reset cursor location
                             else:
                                 cmd = cmd[:-1]
-                                sys.stdout.write("\x08 \x08")
+                                write("\x08 \x08")
                     elif c == CHAR_CTRL_A:
                         raw_repl(sys.stdin, g)
                         break
@@ -170,22 +175,22 @@ async def task(g=None, prompt="--> "):
                     elif c == CHAR_CTRL_C:
                         if paste:
                             break
-                        sys.stdout.write("\n")
+                        write("\n")
                         break
                     elif c == CHAR_CTRL_D:
                         if paste:
                             result = await execute(cmd, g, s)
                             if result is not None:
-                                sys.stdout.write(repr(result))
-                                sys.stdout.write("\n")
+                                write(repr(result))
+                                write("\n")
                             break
 
-                        sys.stdout.write("\n")
+                        write("\n")
                         # Shutdown asyncio.
                         asyncio.new_event_loop()
                         return
                     elif c == CHAR_CTRL_E:
-                        sys.stdout.write("paste mode; Ctrl-C to cancel, Ctrl-D to finish\n===\n")
+                        write("paste mode; Ctrl-C to cancel, Ctrl-D to finish\n===\n")
                         paste = True
                     elif c == 0x1B:
                         # Start of escape sequence.
@@ -195,9 +200,9 @@ async def task(g=None, prompt="--> "):
                             hist[(hist_i - hist_b) % _HISTORY_LIMIT] = cmd
                             # Clear current command.
                             b = "\x08" * len(cmd)
-                            sys.stdout.write(b)
-                            sys.stdout.write(" " * len(cmd))
-                            sys.stdout.write(b)
+                            write(b)
+                            write(" " * len(cmd))
+                            write(b)
                             # Go backwards or forwards in the history.
                             if key == "[A":
                                 hist_b = min(hist_n, hist_b + 1)
@@ -205,45 +210,46 @@ async def task(g=None, prompt="--> "):
                                 hist_b = max(0, hist_b - 1)
                             # Update current command.
                             cmd = hist[(hist_i - hist_b) % _HISTORY_LIMIT]
-                            sys.stdout.write(cmd)
+                            write(cmd)
                         elif key == "[D":  # left
                             if curs < len(cmd) - 1:
                                 curs += 1
-                                sys.stdout.write("\x1b")
-                                sys.stdout.write(key)
+                                write("\x1b")
+                                write(key)
                         elif key == "[C":  # right
                             if curs:
                                 curs -= 1
-                                sys.stdout.write("\x1b")
-                                sys.stdout.write(key)
+                                write("\x1b")
+                                write(key)
                         elif key == "[H":  # home
                             pcurs = curs
                             curs = len(cmd)
-                            sys.stdout.write("\x1b[{}D".format(curs - pcurs))  # move cursor left
+                            write("\x1b[{}D".format(curs - pcurs))  # move cursor left
                         elif key == "[F":  # end
                             pcurs = curs
                             curs = 0
-                            sys.stdout.write("\x1b[{}C".format(pcurs))  # move cursor right
+                            write("\x1b[{}C".format(pcurs))  # move cursor right
                     else:
-                        # sys.stdout.write("\\x")
-                        # sys.stdout.write(hex(c))
+                        # write("\\x")
+                        # write(hex(c))
                         pass
                 else:
                     if curs:
                         # inserting into middle of line
                         cmd = "".join((cmd[:-curs], b, cmd[-curs:]))
-                        sys.stdout.write(cmd[-curs - 1 :])  # redraw line to end
-                        sys.stdout.write("\x1b[{}D".format(curs))  # reset cursor location
+                        write(cmd[-curs - 1 :])  # redraw line to end
+                        write("\x1b[{}D".format(curs))  # reset cursor location
                     else:
-                        sys.stdout.write(b)
+                        write(b)
                         cmd += b
     finally:
         micropython.kbd_intr(3)
 
 
 def raw_paste(s, window=512):
-    sys.stdout.write("R\x01")  # supported
-    sys.stdout.write(bytearray([window & 0xFF, window >> 8, 0x01]).decode())
+    write = sys.stdout.write
+    write("R\x01")  # supported
+    write(bytearray([window & 0xFF, window >> 8, 0x01]).decode())
     eof = False
     idx = 0
     buff = bytearray(window)
@@ -254,7 +260,7 @@ def raw_paste(s, window=512):
             c = ord(b)
             if c == CHAR_CTRL_C or c == CHAR_CTRL_D:
                 # end of file
-                sys.stdout.write(chr(CHAR_CTRL_D))
+                write(chr(CHAR_CTRL_D))
                 if c == CHAR_CTRL_C:
                     raise KeyboardInterrupt
                 file += buff[:idx]
@@ -264,7 +270,7 @@ def raw_paste(s, window=512):
 
         if not eof:
             file += buff
-            sys.stdout.write("\x01")  # indicate window available to host
+            write("\x01")  # indicate window available to host
 
     return file
 
@@ -277,11 +283,12 @@ def raw_repl(s, g: dict):
     """
     heading = "raw REPL; CTRL-B to exit\n"
     line = ""
-    sys.stdout.write(heading)
+    write = sys.stdout.write
+    write(heading)
 
     while True:
         line = ""
-        sys.stdout.write(">")
+        write(">")
         while True:
             b = s.read(1)
             c = ord(b)
@@ -295,12 +302,12 @@ def raw_repl(s, g: dict):
                         break
                 else:
                     # reset raw REPL
-                    sys.stdout.write(heading)
-                    sys.stdout.write(">")
+                    write(heading)
+                    write(">")
                 continue
             elif c == CHAR_CTRL_B:
                 # exit raw REPL
-                sys.stdout.write("\n")
+                write("\n")
                 return 0
             elif c == CHAR_CTRL_C:
                 # clear line
@@ -308,7 +315,7 @@ def raw_repl(s, g: dict):
             elif c == CHAR_CTRL_D:
                 # entry finished
                 # indicate reception of command
-                sys.stdout.write("OK")
+                write("OK")
                 break
             else:
                 # let through any other raw 8-bit value
@@ -317,16 +324,16 @@ def raw_repl(s, g: dict):
         if len(line) == 0:
             # Normally used to trigger soft-reset but stay in raw mode.
             # Fake it for aiorepl / mpremote.
-            sys.stdout.write("Ignored: soft reboot\n")
-            sys.stdout.write(heading)
+            write("Ignored: soft reboot\n")
+            write(heading)
 
         try:
             result = exec(line, g)
             if result is not None:
-                sys.stdout.write(repr(result))
-            sys.stdout.write(chr(CHAR_CTRL_D))
+                write(repr(result))
+            write(chr(CHAR_CTRL_D))
         except Exception as ex:
             print(line)
-            sys.stdout.write(chr(CHAR_CTRL_D))
+            write(chr(CHAR_CTRL_D))
             sys.print_exception(ex, sys.stdout)
-        sys.stdout.write(chr(CHAR_CTRL_D))
+        write(chr(CHAR_CTRL_D))

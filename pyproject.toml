@@ -15,6 +15,7 @@ extend-exclude = [
 ]
 line-length = 99
 target-version = "py38" # enable use of walrus operator
+builtins = ["ptr", "ptr8", "ptr16", "ptr32", "uint", "micropython", "const", "execfile"]
 
 [tool.ruff.lint]
 select = [

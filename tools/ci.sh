@@ -17,37 +17,48 @@ function ci_commit_formatting_run {
 ########################################################################################
 # package tests
 
-MICROPYTHON=/tmp/micropython/ports/unix/build-standard/micropython
+TMPDIR="${TMPDIR:-/tmp}"
+VIRTUAL_ENV="${VIRTUAL_ENV:-${TMPDIR}/micropython-venv}"
+MICROPYTHON="${MICROPYTHON:-${VIRTUAL_ENV}/bin/micropython}"
+MICROPYPATH="${VIRTUAL_ENV}/lib:.frozen"
 
 function ci_package_tests_setup_micropython {
-    git clone https://github.com/micropython/micropython.git /tmp/micropython
+    git clone https://github.com/micropython/micropython.git "${TMPDIR}/micropython"
 
     # build mpy-cross and micropython (use -O0 to speed up the build)
-    make -C /tmp/micropython/mpy-cross -j CFLAGS_EXTRA=-O0
-    make -C /tmp/micropython/ports/unix submodules
-    make -C /tmp/micropython/ports/unix -j CFLAGS_EXTRA=-O0
+    make -C "${TMPDIR}/micropython/mpy-cross" -j CFLAGS_EXTRA=-O0
+    make -C "${TMPDIR}/micropython/ports/unix" submodules
+    make -C "${TMPDIR}/micropython/ports/unix" -j CFLAGS_EXTRA=-O0
+
+    # Create the virtual environment directory
+    mkdir -p "${VIRTUAL_ENV}/bin" "${VIRTUAL_ENV}/lib"
+    ln -s "${TMPDIR}/micropython/ports/unix/build-standard/micropython" "${MICROPYTHON}"
 }
 
 function ci_package_tests_setup_lib {
-    mkdir -p ~/.micropython/lib
-    $CP micropython/ucontextlib/ucontextlib.py ~/.micropython/lib/
-    $CP python-stdlib/fnmatch/fnmatch.py ~/.micropython/lib/
-    $CP -r python-stdlib/hashlib-core/hashlib ~/.micropython/lib/
-    $CP -r python-stdlib/hashlib-sha224/hashlib ~/.micropython/lib/
-    $CP -r python-stdlib/hashlib-sha256/hashlib ~/.micropython/lib/
-    $CP -r python-stdlib/hashlib-sha384/hashlib ~/.micropython/lib/
-    $CP -r python-stdlib/hashlib-sha512/hashlib ~/.micropython/lib/
-    $CP python-stdlib/shutil/shutil.py ~/.micropython/lib/
-    $CP python-stdlib/tempfile/tempfile.py ~/.micropython/lib/
-    $CP -r python-stdlib/unittest/unittest ~/.micropython/lib/
-    $CP -r python-stdlib/unittest-discover/unittest ~/.micropython/lib/
-    $CP unix-ffi/ffilib/ffilib.py ~/.micropython/lib/
-    tree ~/.micropython
+    export MICROPYPATH
+    mkdir -p "${VIRTUAL_ENV}/lib"
+    $CP micropython/ucontextlib/ucontextlib.py "${VIRTUAL_ENV}/lib/"
+    $CP python-stdlib/fnmatch/fnmatch.py "${VIRTUAL_ENV}/lib/"
+    $CP -r python-stdlib/hashlib-core/hashlib "${VIRTUAL_ENV}/lib/"
+    $CP -r python-stdlib/hashlib-sha224/hashlib "${VIRTUAL_ENV}/lib/"
+    $CP -r python-stdlib/hashlib-sha256/hashlib "${VIRTUAL_ENV}/lib/"
+    $CP -r python-stdlib/hashlib-sha384/hashlib "${VIRTUAL_ENV}/lib/"
+    $CP -r python-stdlib/hashlib-sha512/hashlib "${VIRTUAL_ENV}/lib/"
+    $CP python-stdlib/shutil/shutil.py "${VIRTUAL_ENV}/lib/"
+    $CP python-stdlib/tempfile/tempfile.py "${VIRTUAL_ENV}/lib/"
+    $CP -r python-stdlib/unittest/unittest "${VIRTUAL_ENV}/lib/"
+    $CP -r python-stdlib/unittest-discover/unittest "${VIRTUAL_ENV}/lib/"
+    $CP unix-ffi/ffilib/ffilib.py "${VIRTUAL_ENV}/lib/"
+    tree "${VIRTUAL_ENV}"
 }
 
 function ci_package_tests_run {
+    export MICROPYPATH
     for test in \
         micropython/drivers/storage/sdcard/sdtest.py \
+        micropython/umqtt.simple/test_umqtt_simple.py \
+        micropython/net/ntptime/test_ntptime.py \
         micropython/xmltok/test_xmltok.py \
         python-ecosys/requests/test_requests.py \
         python-stdlib/argparse/test_argparse.py \
@@ -62,6 +73,7 @@ function ci_package_tests_run {
         python-stdlib/operator/test_operator.py \
         python-stdlib/os-path/test_path.py \
         python-stdlib/pickle/test_pickle.py \
+        python-stdlib/pprint/test_pprint.py \
         python-stdlib/string/test_translate.py \
         python-stdlib/unittest/tests/exception.py \
         unix-ffi/gettext/test_gettext.py \
@@ -73,7 +85,7 @@ function ci_package_tests_run {
         unix-ffi/time/test_strftime.py \
         ; do
         echo "Running test $test"
-        (cd `dirname $test` && $MICROPYTHON `basename $test`)
+        (cd `dirname $test` && "${MICROPYTHON}" `basename $test`)
         if [ $? -ne 0 ]; then
             false # make this function return an error code
             return
@@ -81,7 +93,9 @@ function ci_package_tests_run {
     done
 
     for path in \
+        micropython/uaiohttpclient \
         micropython/ucontextlib \
+        python-stdlib/colorsys \
         python-stdlib/contextlib \
         python-stdlib/datetime \
         python-stdlib/fnmatch \
@@ -95,15 +109,17 @@ function ci_package_tests_run {
         python-stdlib/time \
         python-stdlib/unittest/tests \
         python-stdlib/unittest-discover/tests \
+        python-stdlib/uuid \
+        python-stdlib/zipfile \
         ; do
-        (cd $path && $MICROPYTHON -m unittest)
+        (cd $path && "${MICROPYTHON}" -m unittest)
         if [ $? -ne 0 ]; then false; return; fi
     done
 
-    (cd micropython/usb/usb-device && $MICROPYTHON -m tests.test_core_buffer)
+    (cd micropython/usb/usb-device && "${MICROPYTHON}" -m tests.test_core_buffer)
     if [ $? -ne 0 ]; then false; return; fi
 
-    (cd python-ecosys/cbor2 && $MICROPYTHON -m examples.cbor_test)
+    (cd python-ecosys/cbor2 && "${MICROPYTHON}" -m examples.cbor_test)
     if [ $? -ne 0 ]; then false; return; fi
 }
 
@@ -111,14 +127,14 @@ function ci_package_tests_run {
 # build packages
 
 function ci_build_packages_setup {
-    git clone https://github.com/micropython/micropython.git /tmp/micropython
+    git clone https://github.com/micropython/micropython.git "${TMPDIR}/micropython"
 
     # build mpy-cross (use -O0 to speed up the build)
-    make -C /tmp/micropython/mpy-cross -j CFLAGS_EXTRA=-O0
+    make -C "${TMPDIR}/micropython/mpy-cross" -j CFLAGS_EXTRA=-O0
 
     # check the required programs run
-    /tmp/micropython/mpy-cross/build/mpy-cross --version
-    python3 /tmp/micropython/tools/manifestfile.py --help
+    "${TMPDIR}/micropython/mpy-cross/build/mpy-cross" --version
+    python3 "${TMPDIR}/micropython/tools/manifestfile.py" --help
 }
 
 function ci_build_packages_check_manifest {
@@ -129,17 +145,17 @@ function ci_build_packages_check_manifest {
         if [[ "$file" =~ "/unix-ffi/" ]]; then
             extra_args="--unix-ffi"
         fi
-        python3 /tmp/micropython/tools/manifestfile.py $extra_args --lib . --compile $file
+        python3 "${TMPDIR}/micropython/tools/manifestfile.py" $extra_args --lib . --compile $file
     done
 }
 
 function ci_build_packages_compile_index {
-    python3 tools/build.py --micropython /tmp/micropython --output $PACKAGE_INDEX_PATH
+    python3 tools/build.py --micropython "${TMPDIR}/micropython" --output $PACKAGE_INDEX_PATH
 }
 
 function ci_build_packages_examples {
     for example in $(find -path \*example\*.py); do
-        /tmp/micropython/mpy-cross/build/mpy-cross $example
+        "${TMPDIR}/micropython/mpy-cross/build/mpy-cross" $example
     done
 }
 
@@ -151,26 +167,26 @@ function ci_push_package_index {
     # "truthy" value in the "Secrets and variables" -> "Actions"
     # -> "Variables" setting of the GitHub repo.
 
-    PAGES_PATH=/tmp/gh-pages
+    PAGES_PATH="${TMPDIR}/gh-pages"
 
     if git fetch --depth=1 origin gh-pages; then
-        git worktree add ${PAGES_PATH} gh-pages
-        cd ${PAGES_PATH}
+        git worktree add "${PAGES_PATH}" gh-pages
+        cd "${PAGES_PATH}"
         NEW_BRANCH=0
     else
         echo "Creating gh-pages branch for $GITHUB_REPOSITORY..."
-        git worktree add --force ${PAGES_PATH} HEAD
-        cd ${PAGES_PATH}
+        git worktree add --force "${PAGES_PATH}" HEAD
+        cd "${PAGES_PATH}"
         git switch --orphan gh-pages
         NEW_BRANCH=1
     fi
 
-    DEST_PATH=${PAGES_PATH}/mip/${GITHUB_REF_NAME}
-    if [ -d ${DEST_PATH} ]; then
-        git rm -r ${DEST_PATH}
+    DEST_PATH="${PAGES_PATH}/mip/${GITHUB_REF_NAME}"
+    if [ -d "${DEST_PATH}" ]; then
+        git rm -r "${DEST_PATH}"
     fi
-    mkdir -p ${DEST_PATH}
-    cd ${DEST_PATH}
+    mkdir -p "${DEST_PATH}"
+    cd "${DEST_PATH}"
 
     cp -r ${PACKAGE_INDEX_PATH}/* .
 

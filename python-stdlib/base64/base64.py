@@ -120,23 +120,8 @@ def b64decode(s, altchars=None, validate=False):
     return binascii.a2b_base64(s)
 
 
-def standard_b64encode(s):
-    """Encode a byte string using the standard Base64 alphabet.
-
-    s is the byte string to encode.  The encoded byte string is returned.
-    """
-    return b64encode(s)
-
-
-def standard_b64decode(s):
-    """Decode a byte string encoded with the standard Base64 alphabet.
-
-    s is the byte string to decode.  The decoded byte string is
-    returned.  binascii.Error is raised if the input is incorrectly
-    padded or if there are non-alphabet characters present in the
-    input.
-    """
-    return b64decode(s)
+standard_b64encode = b64encode
+standard_b64decode = b64decode
 
 
 # _urlsafe_encode_translation = _maketrans(b'+/', b'-_')
@@ -171,43 +156,26 @@ def urlsafe_b64decode(s):
 
 
 # Base32 encoding/decoding must be done in Python
-_b32alphabet = {
-    0: b"A",
-    9: b"J",
-    18: b"S",
-    27: b"3",
-    1: b"B",
-    10: b"K",
-    19: b"T",
-    28: b"4",
-    2: b"C",
-    11: b"L",
-    20: b"U",
-    29: b"5",
-    3: b"D",
-    12: b"M",
-    21: b"V",
-    30: b"6",
-    4: b"E",
-    13: b"N",
-    22: b"W",
-    31: b"7",
-    5: b"F",
-    14: b"O",
-    23: b"X",
-    6: b"G",
-    15: b"P",
-    24: b"Y",
-    7: b"H",
-    16: b"Q",
-    25: b"Z",
-    8: b"I",
-    17: b"R",
-    26: b"2",
-}
-
-_b32tab = [v[0] for k, v in sorted(_b32alphabet.items())]
-_b32rev = dict([(v[0], k) for k, v in _b32alphabet.items()])
+_b32tab = const(b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567")
+# _b32rev = bytearray('\xFF' * 256); for i, j in enumerate(_b32tab): _b32rev[j] = i
+_b32rev = const(
+    b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"
+    b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"
+    b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"
+    b"\xff\xff\x1a\x1b\x1c\x1d\x1e\x1f\xff\xff\xff\xff\xff\xff\xff\xff"
+    b"\xff\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e"
+    b"\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\xff\xff\xff\xff\xff"
+    b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"
+    b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"
+    b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"
+    b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"
+    b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"
+    b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"
+    b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"
+    b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"
+    b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"
+    b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"
+)
 
 
 def b32encode(s):
@@ -303,10 +271,10 @@ def b32decode(s, casefold=False, map01=None):
     acc = 0
     shift = 35
     for c in s:
-        val = _b32rev.get(c)
-        if val is None:
+        val = _b32rev[c]
+        if val == 0xFF:
             raise binascii.Error("Non-base32 digit found")
-        acc += _b32rev[c] << shift
+        acc += val << shift
         shift -= 5
         if shift < 0:
             parts.append(binascii.unhexlify(bytes("%010x" % acc, "ascii")))
@@ -436,16 +404,14 @@ def main():
     import sys, getopt
 
     try:
-        opts, args = getopt.getopt(sys.argv[1:], "deut")
+        opts, args = getopt.getopt(sys.argv[1:], "deu")
     except getopt.error as msg:
         sys.stdout = sys.stderr
         print(msg)
         print(
-            """usage: %s [-d|-e|-u|-t] [file|-]
+            """usage: %s [-d|-e|-u] [file|-]
         -d, -u: decode
-        -e: encode (default)
-        -t: encode and decode string 'Aladdin:open sesame'"""
-            % sys.argv[0]
+        -e: encode (default)""".format(sys.argv[0])
         )
         sys.exit(2)
     func = encode
@@ -456,24 +422,11 @@ def main():
             func = decode
         if o == "-u":
             func = decode
-        if o == "-t":
-            test()
-            return
     if args and args[0] != "-":
         with open(args[0], "rb") as f:
             func(f, sys.stdout.buffer)
     else:
         func(sys.stdin.buffer, sys.stdout.buffer)
-
-
-def test():
-    s0 = b"Aladdin:open sesame"
-    print(repr(s0))
-    s1 = encodebytes(s0)
-    print(repr(s1))
-    s2 = decodebytes(s1)
-    print(repr(s2))
-    assert s0 == s2
 
 
 if __name__ == "__main__":
